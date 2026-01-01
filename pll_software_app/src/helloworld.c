@@ -197,7 +197,7 @@ int main()
     print_qn("cos", st.cos_q30, 30); xil_printf("\r\n");
     print_qn("Out_f(Hz)", st.out_f_q25, 25); xil_printf("\r\n");
 
-    xil_printf("Made by Emirhan Tosun.\r\n");
+    xil_printf("Made by Emirhan Tosun and Yusuf Kılıç.\r\n");
 
     cleanup_platform();
     return 0;
