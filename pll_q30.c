@@ -57,58 +57,44 @@ void pll_q30_init(pll_q30_state_t *st, int32_t kp_q30, int32_t ki_q30)
 //   (a) same I/O scaling, (b) out_f meaning is "Hz estimate", (c) theta update from out_f/Fs.
 void pll_q30_step(pll_q30_state_t *st, int32_t x_q22)
 {
-    // ---- constants ----
-    // Fs = 40 kHz (your real system); keep here so theta update matches target.
+    // Fs = 40 kHz (nihai hedefin)
     const int32_t FS_HZ = 40000;
 
-    // 1) NCO: compute sin/cos from theta (turn domain)
+    // 1) NCO: sin/cos from theta (turn domain, Q30)
     sincos_from_theta_turn_q30(st->theta_q30, &st->sin_q30, &st->cos_q30);
 
-    // 2) Convert x_q22 -> x_q30 for multiplies
+    // 2) x: Q22 -> Q30
     int32_t x_q30 = (int32_t)(x_q22 << 8);
 
-    // 3) Simple phase detector (placeholder): qerr ≈ -x*sin(theta)
-    // In a true SRF-PLL, q would come from Park/LPF/Norm chain.
+    // 3) Phase detector (placeholder): qerr ≈ -x*sin(theta)  (Q30)
     int32_t qerr_q30 = -mul_q30(x_q30, st->sin_q30);
 
-    // 4) PI in Q30
+    // 4) PI (Q30)
     int32_t p_q30 = mul_q30(st->kp_q30, qerr_q30);
-    st->integrator_q30 = sat32((int64_t)st->integrator_q30 + (int64_t)mul_q30(st->ki_q30, qerr_q30));
+    st->integrator_q30 = sat32((int64_t)st->integrator_q30 +
+                               (int64_t)mul_q30(st->ki_q30, qerr_q30));
     int32_t u_q30 = sat32((int64_t)p_q30 + (int64_t)st->integrator_q30);
 
-    // 5) Map PI output to delta_f in Q25 (drop 5 fractional bits)
+    // 5) PI output -> delta_f in Q25  (Q30 >> 5)
     st->delta_f_q25 = sat32((int64_t)u_q30 >> 5);
 
     // 6) out_f (Hz, Q25) = 50 Hz + delta
-    int32_t f_q25 = (int32_t)(50 << 25) + st->delta_f_q25;
+    // (İstersen burada ayrıca saturasyon koyabiliriz; şimdilik sat32 yeter.)
+    int32_t f_q25 = sat32((int64_t)(50 << 25) + (int64_t)st->delta_f_q25);
     st->out_f_q25 = f_q25;
 
-    // 7) theta update:
-    // phase_inc_turn_q30 = f(Hz)/Fs (turn/sample) expressed in Q30
-    // f_q25 -> Q30: shift left by 5, then divide by Fs
-    int64_t num = ((int64_t)f_q25) << 5;         // Q30 * Hz
+    // 7) theta update (turn/sample in Q30):
+    // phase_inc_q30 = (f/FS) in turns/sample, Q30
+    int64_t num = ((int64_t)f_q25) << 5;          // Q25 -> Q30
     int32_t phase_inc_q30 = (int32_t)(num / FS_HZ);
 
-    // Wrap in [0, 1) turn => keep 30 LSBs
+    // Wrap theta in [0,1) turn (keep 30 bits)
     st->theta_q30 = (st->theta_q30 + (uint32_t)phase_inc_q30) & 0x3FFFFFFF;
 }
 
+
 int32_t pll_q30_step_hdl_io(pll_q30_state_t *st, int32_t x_q22)
 {
-    // Q22 -> Q30
-    int32_t x_q30 = (int32_t)(x_q22 << 8);
-
-    // PLL adımı (içeride out_f_q30 ya da omega_q30 üretiyorsan ona göre)
-    pll_q30_step(st, x_q30);
-
-    /*
-      Burada kritik nokta:
-      Senin HDL’de Out_f = PI_dq_LPF + Constant(50Hz) ve Q25 formatında.
-      SW tarafında da st->out_f_q25’i “Hz Q25” olarak tutuyoruz.
-
-      Eğer pll_q30_step içinde zaten "Out_f(Hz) Q25" üretiyorsan burada sadece return et.
-      Eğer pll_q30_step içinde Q30 üretiyorsan Q25’e indirmen gerekir (>>5).
-    */
-
-    return st->out_f_q25;
+    pll_q30_step(st, x_q22);        // Q22 그대로
+    return st->out_f_q25;           // Hz in Q25
 }
