@@ -57,49 +57,51 @@ void pll_q30_init(pll_q30_state_t *st, int32_t kp_q30, int32_t ki_q30)
 //   (a) same I/O scaling, (b) out_f meaning is "Hz estimate", (c) theta update from out_f/Fs.
 void pll_q30_step(pll_q30_state_t *st, int32_t x_q22)
 {
-    // Fs sabit: 40 kHz
+    // ===== Constants =====
+    // Target sampling rate (your real system)
     const int32_t FS_HZ = 40000;
 
-    // (2^32)/FS  ~ reciprocal for fast divide
-    // INV_FS_Q32 = round(2^32 / FS)
-    // Not: FS sabit olduğu için bunu const tutmak güvenli.
-    const uint32_t INV_FS_Q32 = (uint32_t)((((uint64_t)1u << 32) + (FS_HZ/2)) / (uint64_t)FS_HZ);
+    // K_Q35 = round(2^35 / FS_HZ)
+    // We want: phase_inc_q30 = f_q25 * (2^5/FS)  in Q30
+    // => phase_inc_q30 = (f_q25 * K_Q35) >> 30
+    const int32_t K_Q35 = (int32_t)((((uint64_t)1u << 35) + (FS_HZ/2)) / (uint64_t)FS_HZ); // rounded
 
-    // 1) NCO: sin/cos(theta) (theta: turns in Q30)
+    // ===== 1) NCO sin/cos from theta (turn Q30) =====
     sincos_from_theta_turn_q30(st->theta_q30, &st->sin_q30, &st->cos_q30);
 
-    // 2) x: Q22 -> Q30
+    // ===== 2) x: Q22 -> Q30 =====
     int32_t x_q30 = (int32_t)(x_q22 << 8);
 
-    // 3) Phase detector (placeholder)
-    int32_t qerr_q30 = -mul_q30(x_q30, st->sin_q30);
+    // ===== 3) Phase detector (small but important improvement) =====
+    // Prefer: qerr ~ x * cos(theta_hat)  -> LPF component ~ 0.5*sin(delta_theta)
+    int32_t qerr_q30 = mul_q30(x_q30, st->cos_q30);
 
-    // 4) PI (Q30)
+    // ===== 4) PI (Q30) =====
     int32_t p_q30 = mul_q30(st->kp_q30, qerr_q30);
-    st->integrator_q30 = sat32((int64_t)st->integrator_q30 + (int64_t)mul_q30(st->ki_q30, qerr_q30));
+
+    st->integrator_q30 = sat32(
+        (int64_t)st->integrator_q30 +
+        (int64_t)mul_q30(st->ki_q30, qerr_q30)
+    );
+
     int32_t u_q30 = sat32((int64_t)p_q30 + (int64_t)st->integrator_q30);
 
-    // 5) PI output -> delta_f (Q25)
+    // ===== 5) Map PI output to delta_f in Q25 (drop 5 frac bits) =====
     st->delta_f_q25 = sat32((int64_t)u_q30 >> 5);
 
-    // 6) out_f (Hz in Q25) = 50Hz + delta
+    // ===== 6) Out_f (Hz Q25) = 50 Hz + delta =====
+    // (HDL'deki Constant_out1 mantığına uyumlu)
     int32_t f_q25 = (int32_t)(50 << 25) + st->delta_f_q25;
     st->out_f_q25 = f_q25;
 
-    // 7) theta update:
-    // phase_inc_q30 = (f_q25 << 5) / FS
-    // Fast form: ((f_q25 * INV_FS_Q32) >> 27)
-    // Çünkü: (f_q25<<5)/FS ≈ (f_q25 * (2^32/FS)) >> (32-5) = >>27
-    int64_t prod = (int64_t)f_q25 * (int64_t)INV_FS_Q32;
-    int32_t phase_inc_q30 = (int32_t)(prod >> 27);
+    // ===== 7) Theta update (turn Q30) without division =====
+    // phase_inc_q30 = (f_q25 * K_Q35) >> 30
+    // Optional rounding: + (1<<29)
+    int64_t prod = (int64_t)f_q25 * (int64_t)K_Q35;
+    int32_t phase_inc_q30 = (int32_t)((prod + (1ll << 29)) >> 30);
 
+    // Wrap [0,1) turn (keep 30 LSBs)
     st->theta_q30 = (st->theta_q30 + (uint32_t)phase_inc_q30) & 0x3FFFFFFF;
 }
 
 
-
-//int32_t pll_q30_step_hdl_io(pll_q30_state_t *st, int32_t x_q22)
-//{
-//    pll_q30_step(st, x_q22);        // Q22 그대로
-//    return st->out_f_q25;           // Hz in Q25
-//}
