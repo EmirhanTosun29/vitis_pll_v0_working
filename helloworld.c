@@ -145,7 +145,7 @@ int main()
     for (int i=0; i<SETTLE_SAMPLES; i++) {
         uint32_t idx = phase >> (32 - 10);       // 0..1023
         int32_t  x_q22 = (int32_t)bram[idx];     // "ADC" sample in Q22
-        pll_q30_step_hdl_io(&st, x_q22);         // senin HDL-uyumlu step fonksiyonun
+        pll_q30_step(&st, x_q22);         // senin HDL-uyumlu step fonksiyonun
         phase += phase_step;
     }
 
@@ -159,7 +159,7 @@ int main()
     for (int i=0; i<N; i++) {
         uint32_t idx = phase >> (32 - 10);
         int32_t  x_q22 = (int32_t)bram[idx];
-        pll_q30_step_hdl_io(&st, x_q22);
+        pll_q30_step(&st, x_q22);
         phase += phase_step;
     }
 
